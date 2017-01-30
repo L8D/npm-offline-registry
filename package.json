@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "bluebird": "^3.3.4",
-    "express": "^4.13.4"
+    "express": "^4.13.4",
+    "mkdirp": "^0.5.1",
+    "npm-registry-client": "^7.4.5"
   },
   "devDependencies": {
     "mocha": "^2.4.5"

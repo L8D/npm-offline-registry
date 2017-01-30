@@ -31,8 +31,12 @@ app.use( function(req, res, next ){
   next();
 });
 
-app.get( '/:package', function( req, res, next ){
-  var packageName = req.params.package;
+app.use( function(req, res, next) {
+  console.log('---', '???', req.method, req.path);
+  next();
+});
+
+function getPackage (packageName, req, res, next) {
   var cacheFile = [ NPM_PATH, REGISTRY_NAME, packageName, '.cache.json' ].join( '/' );
 
   return fileExists( cacheFile )
@@ -56,12 +60,39 @@ app.get( '/:package', function( req, res, next ){
       return res.send( cachedData );
     })
     .catch( next );
+}
+
+app.get( '/:package', function( req, res, next ){
+  var package = req.params.package;
+
+  return getPackage(package, req, res, next);
+});
+
+app.get( '/@:repo/:package', function( req, res, next ){
+  var repo = req.params.repo;
+  var package = req.params.package;
+
+  return getPackage('@' + repo + '/' + package, req, res, next);
 });
 
 app.get( '/:package/-/:tarball', function( req, res, next ){
-  var packageName = req.params.package;
-  var version = req.params.tarball.match( new RegExp( packageName + '-(.*).tgz') )[1];
-  var packagePath = [ NPM_PATH , packageName, version, 'package.tgz'].join( '/' );
+  var packageId = req.params.package;
+  var packageName = decodeURIComponent(packageId).match(/\/?(.+)$/)[1];
+  var version = req.params.tarball.match( /-(\d.*).tgz$/ )[1];
+
+  return getTarball(packageId, packageName, version, req, res, next);
+});
+
+app.get( '/@:repo/:package/-/:tarball', function( req, res, next ){
+  var repo = req.params.repo;
+  var package = req.params.package;
+  var version = req.params.tarball.match( /-(\d.*).tgz$/ )[1];
+
+  return getTarball('@' + repo + '/' + package, package, version, req, res, next);
+});
+
+function getTarball (packageId, packageName, version, req, res, next) {
+  var packagePath = [ NPM_PATH , packageId, version, 'package.tgz'].join( '/' );
 
   fileExists( packagePath )
     .tap( function( isExists ){
@@ -71,15 +102,17 @@ app.get( '/:package/-/:tarball', function( req, res, next ){
           return Promise.reject( { status: 404 });
         }
         res._log.cacheHit = '---';
-        return fetchAndCacheTarball( packageName, version, packagePath );
+        console.log('pre-fetch', packagePath);
+        return fetchAndCacheTarball( packageId, packageName, version, packagePath );
       }
     })
     .then( function( ){
+      console.log('post-fetch', packagePath);
       res._log.cacheFile = packagePath;
       return res.sendFile( packagePath );
     })
     .catch( next );
-});
+}
 
 
 // catch 404 and forward to error handler

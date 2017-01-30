@@ -2,6 +2,9 @@ var path = require('path');
 var fs = require('fs');
 var config = require( __dirname + '/./config' );
 var Promise = require('bluebird');
+var RegClient = require('npm-registry-client');
+var client = new RegClient();
+var mkdirp = require('mkdirp');
 var _exec = Promise.promisify( require('child_process').exec );
 
 var REGISTRY_NAME = config.REGISTRY_NAME;
@@ -59,7 +62,7 @@ exports.patchData = function ( data ){
 
 var fetchAndCacheMetadataCmd =[
   'mkdir -p $packageCacheDir',
-  'wget -nv "http://$REGISTRY_NAME/$packageName" -O $cacheFile || { wgetExitStatus=$? && rm $cacheFile; exit $wgetExitStatus ; }'
+  'wget -nv --header="Authorization: Bearer b0b4e0e9-4b31-41ba-b7b8-f7a089b8550f" "http://$REGISTRY_NAME/$packageName" -O $cacheFile || { wgetExitStatus=$? && rm $cacheFile; exit $wgetExitStatus ; }'
 ].join( ';' );
 
 var  fetchAndCacheTarballCmd = [
@@ -77,24 +80,57 @@ function encodePackageName( packageName ){
 exports.fetchAndCacheMetadata = function ( packageName, cacheFile ){
   var packageCacheDir = path.dirname( cacheFile );
   packageName = encodePackageName( packageName );
-  return exec( fetchAndCacheMetadataCmd, {
-    packageCacheDir: packageCacheDir,
-    REGISTRY_NAME: REGISTRY_NAME,
-    packageName: packageName,
-    cacheFile: cacheFile,
+
+  return new Promise(function (resolve, reject) {
+    client.get('https://' + REGISTRY_NAME + '/' + packageName, {
+      auth: {token: process.env.NPM_TOKEN},
+      alwaysAuth: true
+    }, function (error, data, raw, res) {
+      if (error) return reject(error);
+
+      resolve({
+        data: data,
+        raw: raw
+      });
+    });
+  }).then(function (result) {
+    return Promise.fromCallback(function (cb) {
+      mkdirp(packageCacheDir, cb);
+    }).then(function () {
+      return Promise.fromCallback(function (cb) {
+        fs.writeFile(cacheFile, result.raw, cb);
+      });
+    }).then(function () {
+      return result.data;
+    });
   });
 };
 
-exports.fetchAndCacheTarball = function ( packageName, version, tarballPath ){
+exports.fetchAndCacheTarball = function ( packageId, packageName, version, tarballPath ){
+  packageId = encodePackageName( packageId ).replace(/%2F/, '/');
   packageName = encodePackageName( packageName );
-  
-  var tarballUrl = 'http://' + REGISTRY_NAME + '/' + packageName + '/-/' + packageName + '-' + version + '.tgz';
+
+  var tarballUrl = 'https://' + REGISTRY_NAME + '/' + packageId + '/-/' + packageName + '-' + version + '.tgz';
   var packageTarballDir = path.dirname( tarballPath );
 
-  return exec( fetchAndCacheTarballCmd, {
-    packageTarballDir: packageTarballDir,
-    tarballUrl: tarballUrl,
-    tarballPath: tarballPath,
+  return Promise.fromCallback(function (cb) {
+    mkdirp(packageTarballDir, cb);
+  }).then(function () {
+    return new Promise(function (resolve, reject) {
+      client.fetch(tarballUrl, {
+        streaming: true,
+        auth: {
+          token: process.env.NPM_TOKEN,
+          alwaysAuth: true
+        }
+      }, function (error, res) {
+        if (error) return reject(error);
+
+        var stream = res.pipe(fs.createWriteStream(tarballPath));
+        stream.on('close', resolve);
+        stream.on('error', reject);
+      });
+    });
   });
 };
 
